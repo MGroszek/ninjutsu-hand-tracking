@@ -1,6 +1,6 @@
 import cv2      # biblioteka OpenCV do obrazu i kamery
 
-cap = cv2.VideoCapture(0)  # 0 = domyślna kamera w Macu
+cap = cv2.VideoCapture(1)  # 0 = domyślna kamera w Iphone , 1 = kamera w Macu
 
 while True:
     ok, frame = cap.read()  # pobierz jedną klatkę
