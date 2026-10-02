@@ -6,6 +6,8 @@ import math
 from mediapipe.tasks.python import BaseOptions, vision
 from pythonosc.udp_client import SimpleUDPClient
 
+OFFSET = 1.2
+
 
 def local_ip():
     """Sprawdza aktualny adres tego Maca w sieci."""
@@ -14,6 +16,19 @@ def local_ip():
     ip = s.getsockname()[0]
     s.close()
     return ip
+
+
+def palm_flatness(lm):
+    # dwa wektory wzdłuż dłoni: nadgarstek→wskazujący, nadgarstek→mały
+    a = (lm[5].x - lm[0].x, lm[5].y - lm[0].y, lm[5].z - lm[0].z)
+    b = (lm[17].x - lm[0].x, lm[17].y - lm[0].y, lm[17].z - lm[0].z)
+    # iloczyn wektorowy = strzałka prostopadła do dłoni
+    nx = a[1] * b[2] - a[2] * b[1]
+    ny = a[2] * b[0] - a[0] * b[2]
+    nz = a[0] * b[1] - a[1] * b[0]
+    length = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+    # 0 = dłoń pionowo, 1 = dłoń płasko
+    return abs(ny) / length
 
 
 # --- połączenie z Unrealem ---
@@ -65,9 +80,10 @@ try:
                 active = not active
             elif pinched and d > 0.40:
                 pinched = False
-            palm = [lm[i] for i in (0, 5, 9, 13, 17)]
-            x = sum(p.x for p in palm) / 5
-            y = sum(p.y for p in palm) / 5
+            x = (lm[0].x + lm[9].x) / 2
+            y = (lm[0].y + lm[9].y) / 2
+            flat = palm_flatness(lm)
+            y = y - hand * OFFSET * flat
             if sx is None:
                 sx, sy = x, y
             else:
