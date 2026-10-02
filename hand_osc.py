@@ -2,6 +2,7 @@ import socket
 import time
 import cv2
 import mediapipe as mp
+import math
 from mediapipe.tasks.python import BaseOptions, vision
 from pythonosc.udp_client import SimpleUDPClient
 
@@ -34,7 +35,11 @@ cap = cv2.VideoCapture(0)
 failures = 0
 sent = 0
 
+active = False
+pinched = False
 try:
+    sx = None
+    sy = None
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -52,12 +57,27 @@ try:
 
         if result.hand_landmarks:
             # czubek palca wskazującego
-            tip = result.hand_landmarks[0][8]
-            # 0..1, bez przeliczania na piksele
-            client.send_message("/hand", [tip.x, tip.y])
+            lm = result.hand_landmarks[0]
+            hand = math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y)
+            d = math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / hand
+            if not pinched and d < 0.25:
+                pinched = True
+                active = not active
+            elif pinched and d > 0.40:
+                pinched = False
+            palm = [lm[i] for i in (0, 5, 9, 13, 17)]
+            x = sum(p.x for p in palm) / 5
+            y = sum(p.y for p in palm) / 5
+            if sx is None:
+                sx, sy = x, y
+            else:
+                sx += (x - sx) * 0.5
+                sy += (y - sy) * 0.5
+                client.send_message("/hand", [sx, sy, 1.0 if active else 0.0])
             sent += 1
             if sent % 15 == 0:                         # co ~pół sekundy, żeby nie zalać terminala
-                print(f"/hand {tip.x:.2f} {tip.y:.2f}")
+                print(f"/hand {sx:.2f} {sy:.2f} active={active}")
+
 
 except KeyboardInterrupt:          # Ctrl+C = spokojne zakończenie, bez czerwonego błędu
     print("Koniec.")
