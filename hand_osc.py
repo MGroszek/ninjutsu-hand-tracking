@@ -6,8 +6,9 @@ import math
 from mediapipe.tasks.python import BaseOptions, vision
 from pythonosc.udp_client import SimpleUDPClient
 
-OFFSET = 1.2
-REF_Hand = 0.13
+OFFSET = 1.2        # jak wysoko nad dłonią (w "dłoniach")
+REF_Hand = 0.13     # rozmiar dłoni przy normalnej odległości
+GROW_TIME = 0.35    # NOWE: czas pojawiania się kuli w sekundach
 
 
 def local_ip():
@@ -42,7 +43,7 @@ ip = local_ip()
 print("Wysyłam do:", ip)
 client = SimpleUDPClient(ip, 8000)
 
-# --- detektor dłoni (tak jak w menu.py) ---
+# --- detektor dłoni ---
 option = vision.HandLandmarkerOptions(
     base_options=BaseOptions(
         model_asset_path="hand_landmarker.task",
@@ -58,10 +59,12 @@ sent = 0
 
 active = False
 pinched = False
+sx = None
+sy = None
 sh = None
+t_on = 0.0          # NOWE: moment włączenia kuli
+
 try:
-    sx = None
-    sy = None
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -90,6 +93,8 @@ try:
             if not pinched and d < 0.25:
                 pinched = True
                 active = not active
+                if active:                  # NOWE
+                    t_on = time.time()      # NOWE: start animacji
             elif pinched and d > 0.40:
                 pinched = False
 
@@ -112,21 +117,30 @@ try:
             else:
                 sh += (hand - sh) * 0.3
 
-            # pozycja 3D w Unrealu
+            # odległość kuli od kamery (rozmiar)
             dist = 500 * REF_Hand / sh
             dist = max(150, min(900, dist))
+
+            # NOWE: animacja pojawienia (kula przylatuje z daleka)
+            g = min(1.0, (time.time() - t_on) / GROW_TIME)
+            g = 1 - (1 - g) ** 3
+            dist = min(4500, dist / max(g, 0.1))
+
+            # pozycja 3D w Unrealu
             ux = dist
             uy = (sx - 0.5) * 2 * dist
-            uz = 500 + (0.5 - sy) * 1.125 * dist
+            uz = 5500 + (0.5 - sy) * 1.125 * dist
 
             client.send_message(
                 "/hand", [sx, sy, 1.0 if active else 0.0, ux, uy, uz])
             sent += 1
             if sent % 15 == 0:
                 print(f"hand={sh:.3f} dist={dist:.0f}")
-except KeyboardInterrupt:          # Ctrl+C = spokojne zakończenie, bez czerwonego błędu
+
+except KeyboardInterrupt:          # Ctrl+C = spokojne zakończenie
     print("Koniec.")
 finally:                           # wykona się ZAWSZE, nawet po błędzie
     cap.release()
-
     detector.close()
+
+    # .venv/bin/python hand_osc.py
