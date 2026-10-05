@@ -9,6 +9,7 @@ from pythonosc.udp_client import SimpleUDPClient
 OFFSET = 1.2        # jak wysoko nad dłonią (w "dłoniach")
 REF_Hand = 0.13     # rozmiar dłoni przy normalnej odległości
 GROW_TIME = 0.35    # NOWE: czas pojawiania się kuli w sekundach
+SHRINK_TIME = 0.3  # NOWE: czas znikania kuli w sekundach
 
 
 def local_ip():
@@ -38,6 +39,15 @@ def dist2d(a, b, aspect):
     return math.hypot(a.x - b.x, (a.y - b.y) * aspect)
 
 
+def is_fist(lm, aspect):
+    # palec zgięty = czubek bliżej nadgarstka niż środkowy staw
+    folded = 0
+    for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18)):
+        if dist2d(lm[tip], lm[0], aspect) < dist2d(lm[pip], lm[0], aspect):
+            folded += 1
+    return folded == 4
+
+
 # --- połączenie z Unrealem ---
 ip = local_ip()
 print("Wysyłam do:", ip)
@@ -63,6 +73,8 @@ sx = None
 sy = None
 sh = None
 t_on = 0.0          # NOWE: moment włączenia kuli
+t_off = 10.0        # NOWE: moment wyłączenia kuli
+fist_frames = 0        # NOWE: licznik klatek z pięścią
 
 try:
     while True:
@@ -88,15 +100,27 @@ try:
             width = dist2d(lm[5], lm[17], aspect)
             hand = max(length, width * 1.3)
 
-            # szczypnięcie
+            # pięść - liczymy, ile klatek z rzędu trwa
+            fist = is_fist(lm, aspect)
+            if fist:
+                fist_frames += 1
+            else:
+                fist_frames = 0
+
+            # szczypnięcie = WŁĄCZ (tylko gdy dłoń NIE jest pięścią)
             d = dist2d(lm[4], lm[8], aspect) / hand
-            if not pinched and d < 0.25:
+            if not pinched and d < 0.25 and not fist:
                 pinched = True
-                active = not active
-                if active:                  # NOWE
-                    t_on = time.time()      # NOWE: start animacji
+                if not active and time.time() - t_off > 0.5:
+                    active = True
+                    t_on = time.time()
             elif pinched and d > 0.40:
                 pinched = False
+
+            # pięść przez 5 klatek = WYŁĄCZ
+            if active and fist_frames >= 5:
+                active = False
+                t_off = time.time()
 
             # środek dłoni + przesunięcie nad dłoń
             x = (lm[0].x + lm[9].x) / 2
@@ -121,21 +145,25 @@ try:
             dist = 500 * REF_Hand / sh
             dist = max(150, min(900, dist))
 
-            # NOWE: animacja pojawienia (kula przylatuje z daleka)
-            g = min(1.0, (time.time() - t_on) / GROW_TIME)
-            g = 1 - (1 - g) ** 3
+            now = time.time()
+            if active:
+                g = min(1.0, (now - t_on) / GROW_TIME)
+                # pojawianie: szybko, potem hamuje
+                g = 1 - (1 - g) ** 3
+                visible = True
+            else:
+                p = min(1.0, (now - t_off) / SHRINK_TIME)
+                g = (1 - p) ** 2              # znikanie: maleje coraz szybciej
+                visible = p < 1.0             # widoczna, dopóki animacja trwa
             dist = min(4500, dist / max(g, 0.1))
-
             # pozycja 3D w Unrealu
             ux = dist
             uy = (sx - 0.5) * 2 * dist
             uz = 5500 + (0.5 - sy) * 1.125 * dist
 
             client.send_message(
-                "/hand", [sx, sy, 1.0 if active else 0.0, ux, uy, uz])
-            sent += 1
-            if sent % 15 == 0:
-                print(f"hand={sh:.3f} dist={dist:.0f}")
+                "/hand", [sx, sy, 1.0 if active else 0.0, ux, uy, uz,
+                          1.0 if visible else 0.0])
 
 except KeyboardInterrupt:          # Ctrl+C = spokojne zakończenie
     print("Koniec.")
